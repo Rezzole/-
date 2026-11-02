@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ASCII Lily Bouquet</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<script>
+// ===== 1) ตั้งค่าพื้นฐาน =====
+const screen = document.getElementById('screen');          // จอจริงที่ผู้ใช้เห็น (วาดตัวอักษร)
+const ctx = screen.getContext('2d');
+const scene = document.createElement('canvas');            // จอลับ: วาดดอกไม้เป็นรูปภาพธรรมดาไว้ตรงนี้
+const sctx = scene.getContext('2d', { willReadFrequently: true });
+
+const CELL_W = 7, CELL_H = 9;     // ขนาดของตัวอักษรแต่ละช่อง (px)
+const SS = 3;                     // วาดละเอียดกว่าช่องตัวอักษร 3 เท่า ภาพจะได้ไม่หยาบ
+const RAMP = ' .:-=+*#%@';        // ตัวอักษรเรียงจากจางไปเข้ม (ยิ่งสว่าง ยิ่งใช้ตัวเข้ม)
+let cols, rows, W, H, offX;
+
+function resize() {
+  const r = screen.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  screen.width = r.width * dpr;
+  screen.height = r.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cols = Math.floor(r.width / CELL_W);
+  rows = Math.floor(r.height / CELL_H);
+  offX = (r.width - cols * CELL_W) / 2;
+  scene.width = W = cols * SS;
+  scene.height = H = rows * SS;
+  ctx.font = 'bold ' + CELL_H + 'px monospace';
+  ctx.textBaseline = 'top';
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ===== 2) ข้อมูลดอกไม้ =====
+const COLORS = ['#e8222e', '#ff5fa8', '#ffd23f', '#f4a261', '#c77dff', '#fff0d6'];
+const flowers = [];
+for (let i = 0; i < 9; i++) {
+  const d = Math.abs(i - 4);                                // ยิ่งอยู่ริมช่อ ยิ่งเตี้ยลง
+  flowers.push({
+    x: 0.5 + (i - 4) * 0.09,                                // ตำแหน่งแนวนอนของดอก (0-1)
+    top: 0.24 + d * 0.04 + Math.random() * 0.05,            // ตำแหน่งแนวตั้งของดอก
+    size: 0.10 + Math.random() * 0.04,                      // ขนาดกลีบ
+    color: COLORS[i % COLORS.length],
+    delay: i * 0.04,                                        // ดอกแต่ละดอกเริ่มโตไม่พร้อมกัน
+    rot: Math.random() * Math.PI
+  });
+}
+const stars = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random(), p: Math.random() * 6 }));
+
+// ===== 3) ฟังก์ชันช่วย =====
+const clamp = (v) => Math.max(0, Math.min(1, v));
+const ease = (v) => v * v * (3 - 2 * v);                   // ทำให้การเคลื่อนไหวนุ่มขึ้น
+
+// จุดบนเส้นก้านโค้ง (Bezier) ที่ตำแหน่ง s (0 = โคนก้าน, 1 = ปลายก้าน)
+function stemPoint(f, s) {
+  const p0 = { x: 0.5, y: 0.95 };
+  const p1 = { x: 0.5 + (f.x - 0.5) * 0.2, y: (0.95 + f.top) / 2 };
+  const p2 = { x: f.x, y: f.top };
+  const a = (1 - s) * (1 - s), b = 2 * (1 - s) * s, c = s * s;
+  return { x: (a * p0.x + b * p1.x + c * p2.x) * W, y: (a * p0.y + b * p1.y + c * p2.y) * H };
+}
+
+// ===== 4) วาดดอกไม้ลงจอลับ =====
+function drawScene(t) {
+  sctx.clearRect(0, 0, W, H);
+  const sway = Math.sin(t * 1.3) * 0.05;                   // แกว่งเบา ๆ ให้ดูมีชีวิต
+  for (const f of flowers) {
+    const g = ease(clamp((t - f.delay * 3) / 3));          // ก้านโตกี่ % แล้ว
+    const b = ease(clamp((t - f.delay * 3 - 2.5) / 3));    // ดอกบานกี่ % แล้ว
+    if (g <= 0) continue;
+
+    // ก้าน: ไล่วาดเส้นเล็ก ๆ จากโคนไปถึงจุดที่โตแล้ว
+    sctx.strokeStyle = '#2fa84f';
+    sctx.lineWidth = W * 0.014;
+    sctx.lineCap = 'round';
+    sctx.beginPath();
+    for (let s = 0; s <= g; s += 0.02) {
+      const p = stemPoint(f, s);
+      s === 0 ? sctx.moveTo(p.x, p.y) : sctx.lineTo(p.x, p.y);
+    }
+    sctx.stroke();
+
+    // ใบ: วางไว้ 3 จุดบนก้าน เมื่อก้านโตผ่านจุดนั้น
+    sctx.fillStyle = '#3cc45e';
+    [0.3, 0.5, 0.7].forEach((s, k) => {
+      if (g < s) return;
+      const p = stemPoint(f, s);
+      sctx.beginPath();
+      sctx.ellipse(p.x, p.y, W * 0.05, W * 0.016, (k % 2 ? -0.6 : 0.6) + (k % 2 ? Math.PI : 0), 0, Math.PI * 2);
+      sctx.fill();
+    });
+
+    // ดอก: 6 กลีบ หมุนรอบปลายก้าน
+    if (b <= 0) continue;
+    const tip = stemPoint(f, 1);
+    const L = f.size * W * b;                              // ความยาวกลีบ ใหญ่ขึ้นตามค่า b
+    for (let k = 0; k < 6; k++) {
+      sctx.save();
+      sctx.translate(tip.x, tip.y);
+      sctx.rotate(f.rot + k * Math.PI / 3 + sway);
+      const grad = sctx.createLinearGradient(0, 0, L, 0);  // กลางดอกสว่าง ปลายกลีบเป็นสีดอก
+      grad.addColorStop(0, '#fff6d8');
+      grad.addColorStop(0.45, f.color);
+      grad.addColorStop(1, f.color);
+      sctx.fillStyle = grad;
+      sctx.beginPath();
+      sctx.moveTo(0, 0);
+      sctx.quadraticCurveTo(L * 0.5, -L * 0.35, L, 0);
+      sctx.quadraticCurveTo(L * 0.5, L * 0.35, 0, 0);
+      sctx.fill();
+      sctx.strokeStyle = 'rgba(0,0,0,0.3)';                // เส้นกลางกลีบ ช่วยให้ตัวอักษรมีลายเส้น
+      sctx.lineWidth = W * 0.004;
+      sctx.beginPath();
+      sctx.moveTo(L * 0.1, 0);
+      sctx.lineTo(L * 0.85, 0);
+      sctx.stroke();
+      sctx.restore();
+    }
+    // เกสร
+    sctx.fillStyle = '#ffb347';
+    for (let k = 0; k < 3; k++) {
+      const a = f.rot + k * 2.1 + sway;
+      sctx.beginPath();
+      sctx.arc(tip.x + Math.cos(a) * L * 0.25, tip.y + Math.sin(a) * L * 0.25, W * 0.008, 0, Math.PI * 2);
+      sctx.fill();
+    }
+  }
+}
+
+// ===== 5) แปลงภาพเป็นตัวอักษร (หัวใจของงานนี้) =====
+function renderAscii(t, fade) {
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, screen.width, screen.height);
+
+  // ดาวระยิบระยับ
+  ctx.fillStyle = '#fff';
+  for (const s of stars) {
+    ctx.globalAlpha = (0.2 + 0.6 * Math.abs(Math.sin(t * 1.5 + s.p))) * fade;
+    ctx.fillText('.', offX + s.x * cols * CELL_W, s.y * rows * CELL_H);
+  }
+
+  const data = sctx.getImageData(0, 0, W, H).data;         // อ่านสีพิกเซลทั้งภาพจากจอลับ
+  ctx.globalAlpha = fade;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      // สุ่มดูพิกเซลกลางช่อง 1 จุด เป็นตัวแทนของทั้งช่อง
+      const i = ((r * SS + 1) * W + (c * SS + 1)) * 4;
+      const a = data[i + 3];
+      if (a < 60) continue;                                // ช่องว่าง ไม่ต้องวาด
+      const R = data[i], G = data[i + 1], B = data[i + 2];
+      const lum = 0.3 * R + 0.59 * G + 0.11 * B;           // ความสว่าง 0-255
+      const ch = RAMP[Math.min(RAMP.length - 1, Math.floor(lum / 256 * RAMP.length))];
+      if (ch === ' ') continue;
+      ctx.fillStyle = 'rgb(' + R + ',' + G + ',' + B + ')'; // ตัวอักษรใช้สีเดียวกับพิกเซลนั้น
+      ctx.fillText(ch, offX + c * CELL_W, r * CELL_H);
+    }
+  }
+}
+
+// ===== 6) ลูปแอนิเมชัน =====
+let start = performance.now();
+const LOOP = 14;                                           // เล่นวนทุก 14 วินาที
+function frame(now) {
+  const t = ((now - start) / 1000) % LOOP;
+  const fade = t > 12.5 ? (LOOP - t) / 1.5 : 1;            // ท้ายรอบค่อย ๆ จางหาย
+  drawScene(t);
+  renderAscii(t, Math.max(0, fade));
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+screen.addEventListener('pointerdown', () => { start = performance.now(); });  // แตะเพื่อเริ่มใหม่
+</script>
+</body>
+</html>
